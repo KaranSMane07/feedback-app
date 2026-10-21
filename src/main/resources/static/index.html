@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Feedback</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f4; display: flex; justify-content: center; padding-top: 60px; }
+  .card { background: #fff; padding: 24px; border-radius: 8px; width: 340px; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+  .wide { width: 560px; }
+  h2 { text-align: center; margin-top: 0; }
+  input, textarea, button { width: 100%; box-sizing: border-box; padding: 8px; margin: 6px 0; }
+  button { background: #ddd; border: 1px solid #ccc; cursor: pointer; }
+  .tabs { display: flex; gap: 8px; }
+  .tabs button.active { border: 2px solid #000; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { border: 1px solid #ddd; padding: 6px; text-align: left; }
+  td button { width: auto; margin: 0 2px; padding: 2px 6px; }
+  .small { text-align: center; font-size: 13px; }
+  a { cursor: pointer; color: #036; }
+  .err { color: red; font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+<div id="app" class="card"></div>
+
+<script>
+let user = null;
+const app = document.getElementById('app');
+
+async function api(method, url, body) {
+  const res = await fetch('/api' + url, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined
+  });
+  const data = res.status === 204 ? null : await res.json().catch(() => null);
+  return { ok: res.ok, data };
+}
+
+function setCard(wide) { app.className = 'card' + (wide ? ' wide' : ''); }
+
+// ---------- Login ----------
+function showLogin(msg) {
+  setCard(false);
+  app.innerHTML = `
+    <h2>Login</h2>
+    <input id="u" placeholder="Username">
+    <input id="p" type="password" placeholder="Password">
+    <button onclick="doLogin()">Log In</button>
+    <div class="err">${msg || ''}</div>
+    <div class="small">Don't have an account? <a onclick="showRegister()">Sign Up</a></div>`;
+}
+
+async function doLogin() {
+  const r = await api('POST', '/login', { username: u.value, password: p.value });
+  if (!r.ok) return showLogin(r.data?.error || 'Login failed');
+  user = r.data;
+  user.role === 'ADMIN' ? showAdmin() : showFeedback('add');
+}
+
+// ---------- Register ----------
+function showRegister(msg) {
+  setCard(false);
+  app.innerHTML = `
+    <h2>Register</h2>
+    <input id="u" placeholder="Username">
+    <input id="e" placeholder="Email">
+    <input id="p" type="password" placeholder="Password">
+    <input id="c" type="password" placeholder="Confirm Password">
+    <button onclick="doRegister()">Sign Up</button>
+    <div class="err">${msg || ''}</div>
+    <div class="small">Already have an account? <a onclick="showLogin()">Log In</a></div>`;
+}
+
+async function doRegister() {
+  if (p.value !== c.value) return showRegister('Passwords do not match');
+  const r = await api('POST', '/register', { username: u.value, email: e.value, password: p.value });
+  if (!r.ok) return showRegister(r.data?.error || 'Registration failed');
+  showLogin('Registered! Please log in.');
+}
+
+// ---------- User feedback (add / edit) ----------
+async function showFeedback(mode) {
+  setCard(false);
+  const r = await api('GET', '/my-feedback/' + user.id);
+  const existing = r.data;
+  const text = mode === 'edit' && existing ? existing.text : '';
+  app.innerHTML = `
+    <h2>Feedback</h2>
+    <div class="tabs">
+      <button class="${mode === 'add' ? 'active' : ''}" onclick="showFeedback('add')">Add Feedback</button>
+      <button class="${mode === 'edit' ? 'active' : ''}" onclick="showFeedback('edit')">Edit Feedback</button>
+    </div>
+    <label>Your Feedback:</label>
+    <textarea id="t" rows="6" placeholder="Write your feedback here...">${text}</textarea>
+    <button onclick="submitFeedback('${mode}')">Submit</button>
+    <div class="err" id="m"></div>
+    <div class="small"><a onclick="logout()">Log Out</a></div>`;
+  if (mode === 'edit' && !existing) m.textContent = 'No feedback submitted yet. Use Add Feedback.';
+}
+
+async function submitFeedback(mode) {
+  if (!t.value.trim()) return (m.textContent = 'Feedback cannot be empty');
+  await api('PUT', '/my-feedback/' + user.id, { text: t.value });
+  m.style.color = 'green';
+  m.textContent = 'Saved!';
+}
+
+// ---------- Admin dashboard ----------
+async function showAdmin() {
+  setCard(true);
+  const r = await api('GET', '/feedback');
+  const rows = r.data.map(f => `
+    <tr>
+      <td>${f.id}</td>
+      <td>${esc(f.text)}</td>
+      <td>${f.date}</td>
+      <td>
+        <button onclick="viewFb(${f.id})">View</button>
+        <button onclick="editFb(${f.id})">Edit</button>
+        <button onclick="delFb(${f.id})">Delete</button>
+      </td>
+    </tr>`).join('');
+  app.innerHTML = `
+    <h2>Admin Feedback Dashboard</h2>
+    <table>
+      <tr><th>ID</th><th>Feedback</th><th>Date</th><th>Actions</th></tr>
+      ${rows}
+    </table>
+    <div class="small" style="margin-top:10px"><a onclick="logout()">Log Out</a></div>`;
+}
+
+async function viewFb(id) {
+  const r = await api('GET', '/feedback/' + id);
+  alert(r.data.text);
+}
+
+async function editFb(id) {
+  const r = await api('GET', '/feedback/' + id);
+  const text = prompt('Edit feedback:', r.data.text);
+  if (text === null) return;
+  await api('PUT', '/feedback/' + id, { text });
+  showAdmin();
+}
+
+async function delFb(id) {
+  if (!confirm('Delete feedback ' + id + '?')) return;
+  await api('DELETE', '/feedback/' + id);
+  showAdmin();
+}
+
+function logout() { user = null; showLogin(); }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+showLogin();
+</script>
+</body>
+</html>
